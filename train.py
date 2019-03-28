@@ -6,6 +6,7 @@ from network import Tacotron2
 from data_utils import DataLoader, collate_fn
 from data_utils import Tacotron2DataLoader
 from loss_function import Tacotron2Loss
+import SpeakerEncoder
 import hparams as hp
 
 from multiprocessing import cpu_count
@@ -20,15 +21,16 @@ cuda_available = torch.cuda.is_available()
 
 def main(args):
     # Get device
-    device = torch.device('cuda'if torch.cuda.is_available()else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Define model
-    model = nn.DataParallel(Tacotron2(hp)).to(device)
+    model = Tacotron2(hp).to(device)
+    model_SpeakerEncoder = SpeakerEncoder.get_model().to(device)
     # model = Tacotron2(hp).to(device)
-    print("Model Have Been Defined")
+    print("All Models Have Been Defined")
 
     # Get dataset
-    dataset = Tacotron2DataLoader(hp.dataset_path)
+    dataset = Tacotron2DataLoader()
 
     # Optimizer
     optimizer = torch.optim.Adam(
@@ -75,7 +77,17 @@ def main(args):
             optimizer.zero_grad()
 
             # Load Data
-            text_padded, input_lengths, mel_padded, gate_padded, output_lengths = batch
+            text_padded, input_lengths, mel_padded, gate_padded, output_lengths, mel_for_SE = batch
+
+            # Get Speaker Embedding
+            # print(np.shape(mel_for_SE))
+            mel_for_SE = torch.from_numpy(mel_for_SE).float().to(device)
+            # print(mel_for_SE.size())
+            with torch.no_grad():
+                SpeakerEmbedding = model_SpeakerEncoder(mel_for_SE)
+            # print(SpeakerEmbedding.size())
+            # print(SpeakerEmbedding)
+            # print(SpeakerEmbedding.grad)
 
             if cuda_available:
                 text_padded = torch.from_numpy(text_padded).type(
@@ -96,8 +108,8 @@ def main(args):
 
             batch = text_padded, input_lengths, mel_padded, gate_padded, output_lengths
 
-            x, y = model.module.parse_batch(batch)
-            y_pred = model(x)
+            x, y = model.parse_batch(batch)
+            y_pred = model(x, SpeakerEmbedding)
 
             # Loss
             loss, mel_loss, gate_loss = criterion(y_pred, y)
@@ -130,9 +142,6 @@ def main(args):
                 )}, os.path.join(hp.checkpoint_path, 'checkpoint_%d.pth.tar' % current_step))
                 print("\nsave model at step %d ...\n" % current_step)
 
-            if current_step in hp.decay_step:
-                optimizer = adjust_learning_rate(optimizer, current_step)
-
             end_time = time.perf_counter()
             Time = np.append(Time, end_time - start_time)
             if len(Time) == hp.clear_Time:
@@ -142,26 +151,10 @@ def main(args):
                 Time = np.append(Time, temp_value)
 
 
-def adjust_learning_rate(optimizer, step):
-    if step == 100000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0005
-
-    elif step == 200000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0003
-
-    elif step == 300000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0001
-
-    return optimizer
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--restore_step', type=int,
-                        help='Global step to restore checkpoint', default=170100)
+                        help='Global step to restore checkpoint', default=0)
 
     args = parser.parse_args()
     main(args)

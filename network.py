@@ -51,7 +51,6 @@ class Attention(nn.Module):
         query: decoder output (batch, n_mel_channels * n_frames_per_step)
         processed_memory: processed encoder outputs (B, T_in, attention_dim)
         attention_weights_cat: cumulative and prev. att weights (B, 2, max_time)
-
         RETURNS
         -------
         alignment (batch, max_time)
@@ -77,7 +76,6 @@ class Attention(nn.Module):
         attention_weights_cat: previous and cummulative attention weights
         mask: binary mask for padded data
         """
-
         alignment = self.get_alignment_energies(
             attention_hidden_state, processed_memory, attention_weights_cat)
 
@@ -253,12 +251,10 @@ class Decoder(nn.Module):
         PARAMS
         ------
         memory: decoder outputs
-
         RETURNS
         -------
         decoder_input: all zeros frames
         """
-
         B = memory.size(0)
         decoder_input = Variable(memory.data.new(
             B, self.n_mel_channels * self.n_frames_per_step).zero_())
@@ -273,7 +269,6 @@ class Decoder(nn.Module):
         memory: Encoder outputs
         mask: Mask for padded data if training, expects None for inference
         """
-
         B = memory.size(0)
         MAX_TIME = memory.size(1)
 
@@ -303,12 +298,10 @@ class Decoder(nn.Module):
         PARAMS
         ------
         decoder_inputs: inputs used for teacher-forced training, i.e. mel-specs
-
         RETURNS
         -------
         inputs: processed decoder inputs
         """
-
         # (B, n_mel_channels, T_out) -> (B, T_out, n_mel_channels)
         decoder_inputs = decoder_inputs.transpose(1, 2)
         decoder_inputs = decoder_inputs.view(
@@ -325,14 +318,12 @@ class Decoder(nn.Module):
         mel_outputs:
         gate_outputs: gate output energies
         alignments:
-
         RETURNS
         -------
         mel_outputs:
         gate_outpust: gate output energies
         alignments:
         """
-
         # (T_out, B) -> (B, T_out)
         alignments = torch.stack(alignments).transpose(0, 1)
         # (T_out, B) -> (B, T_out)
@@ -353,14 +344,12 @@ class Decoder(nn.Module):
         PARAMS
         ------
         decoder_input: previous mel output
-
         RETURNS
         -------
         mel_output:
         gate_output: gate output energies
         attention_weights:
         """
-
         cell_input = torch.cat((decoder_input, self.attention_context), -1)
         self.attention_hidden, self.attention_cell = self.attention_rnn(
             cell_input, (self.attention_hidden, self.attention_cell))
@@ -401,7 +390,6 @@ class Decoder(nn.Module):
         memory: Encoder outputs
         decoder_inputs: Decoder inputs for teacher forcing. i.e. mel-specs
         memory_lengths: Encoder output lengths for attention masking.
-
         RETURNS
         -------
         mel_outputs: mel outputs from the decoder
@@ -436,14 +424,12 @@ class Decoder(nn.Module):
         PARAMS
         ------
         memory: Encoder outputs
-
         RETURNS
         -------
         mel_outputs: mel outputs from the decoder
         gate_outputs: gate outputs from the decoder
         alignments: sequence of attention weights from the decoder
         """
-        
         decoder_input = self.get_go_frame(memory)
 
         self.initialize_decoder_states(memory, mask=None)
@@ -512,13 +498,25 @@ class Tacotron2(nn.Module):
 
         return outputs
 
-    def forward(self, inputs):
-        inputs, input_lengths, targets, max_len, output_lengths = inputs
+    def add_encoder_embedding(self, encoder_outputs, embeddings):
+        for ind in range(encoder_outputs.size(0)):
+            for index in range(encoder_outputs.size(1)):
+                encoder_outputs[ind][index] = encoder_outputs[ind][index] + \
+                    embeddings[ind]
+        return encoder_outputs
+
+    def forward(self, input_, embeddings):
+        # def forward(self, input_):
+        inputs, input_lengths, targets, max_len, output_lengths = input_
+        # print(max_len.size())
         input_lengths, output_lengths = input_lengths.data, output_lengths.data
 
         embedded_inputs = self.embedding(inputs).transpose(1, 2)
 
         encoder_outputs = self.encoder(embedded_inputs, input_lengths)
+        # print(encoder_outputs.size())
+        encoder_outputs = self.add_encoder_embedding(
+            encoder_outputs, embeddings)
 
         mel_outputs, gate_outputs, alignments = self.decoder(
             encoder_outputs, targets, memory_lengths=input_lengths)
@@ -530,9 +528,13 @@ class Tacotron2(nn.Module):
             [mel_outputs, mel_outputs_postnet, gate_outputs, alignments],
             output_lengths)
 
-    def inference(self, inputs):
+    def inference(self, input_, embeddings):
+        inputs = input_
         embedded_inputs = self.embedding(inputs).transpose(1, 2)
         encoder_outputs = self.encoder.inference(embedded_inputs)
+        # print(encoder_outputs.size())
+        encoder_outputs = self.add_encoder_embedding(
+            encoder_outputs, embeddings)
         mel_outputs, gate_outputs, alignments = self.decoder.inference(
             encoder_outputs)
 
@@ -546,7 +548,5 @@ class Tacotron2(nn.Module):
 
 
 if __name__ == "__main__":
-
     model = Tacotron2(hparams)
-    print(type(model))
     print(model)
